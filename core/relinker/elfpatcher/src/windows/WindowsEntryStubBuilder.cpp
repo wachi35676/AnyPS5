@@ -112,9 +112,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto guestFinished = reserve(4);
     const WindowsGuestStartup guestStartup;
     Io::AlignBuffer(data, 4);
-    const auto functionTable = reserve(12 * 32);
+    const auto functionTable = reserve(12 * (32 + (lazyBinding ? imports.size() : 0)));
     const auto unwindRva = CheckedRva(dataRva + data.size());
     data.insert(data.end(), {1, 10, 6, 0, 10, 0xb2, 6, 0xc0, 4, 0x70, 3, 0x60, 2, 0x50, 1, 0x30});
+    const auto lazyUnwindRva = CheckedRva(dataRva + data.size());
+    data.insert(data.end(), {1, 4, 2, 5, 4, 3, 1, 0x50});
 
     std::vector<std::uint32_t> libraryPaths;
     std::vector<std::size_t> libraryUnits;
@@ -671,15 +673,21 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     for (const auto index : lazyUnresolvedImports) {
         const auto stubRva = code.GetRva();
+        code.Emit({0x55, 0x48, 0x89, 0xe5, 0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x40});
         writeString(errorRvas.at(3 + index), true);
         raise(0xc0000139u);
+        const auto entry = functionTable - dataRva + (result.LazyStubs.size() + 1) * 12;
+        Io::WriteU32(data, entry, stubRva);
+        Io::WriteU32(data, entry + 4, code.GetRva());
+        Io::WriteU32(data, entry + 8, lazyUnwindRva);
         result.LazyStubs.push_back({imports[index].TargetRva, stubRva});
     }
 
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);
-    auto exceptionEntries = CheckedRva(1);
+    const auto firstDependency = result.LazyStubs.size() + 1;
+    auto exceptionEntries = CheckedRva(firstDependency);
     if (dependencyBuilder.has_value()) {
         const auto dependency = dependencyBuilder->Build(code, nativeImports);
         for (const auto offset : dependencyCalls)
@@ -688,9 +696,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             throw Domain::RelinkerException("Too many dependency diagnostic routines");
         for (std::size_t index = 0; index < dependency.Functions.size(); ++index) {
             for (std::size_t field = 0; field < 3; ++field)
-                Io::WriteU32(data, functionTable - dataRva + (index + 1) * 12 + field * 4, dependency.Functions[index][field]);
+                Io::WriteU32(data, functionTable - dataRva + (firstDependency + index) * 12 + field * 4, dependency.Functions[index][field]);
         }
-        exceptionEntries = CheckedRva(dependency.Functions.size() + 1);
+        exceptionEntries = CheckedRva(firstDependency + dependency.Functions.size());
     }
     result.ExceptionDirectory = {functionTable, CheckedRva(exceptionEntries * 12)};
     result.Code.Data = code.TakeBytes();
