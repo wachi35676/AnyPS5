@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
 #include <array>
+#include <cfenv>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -125,6 +126,40 @@ static bool CheckWidePrecision() {
         if (capacity) Require(output[copied] == 0);
     }
     return correct;
+}
+
+static void CheckHexadecimalFloats() {
+    char output[160];
+    const auto matches = [&](int count, const char* expected) {
+        const bool equal = count == static_cast<int>(std::strlen(expected)) && std::strcmp(output, expected) == 0;
+        if (!equal) std::fprintf(stderr, "hexadecimal float: expected %s, received %s\n", expected, output);
+        return equal;
+    };
+    Require(matches(FormatList(output, sizeof(output), "%ls%a|%a|%a|%a|%.2a|%.14a", u"", 1.0, 0.1, 5e-324, 2.2250738585072009e-308,
+        0x0.123p-1022, 0.1), "0x1p+0|0x1.999999999999ap-4|0x1p-1074|0x1.ffffffffffffep-1023|0x1.23p-1026|0x1.999999999999a0p-4"));
+    Require(matches(FormatList(output, sizeof(output), "%ls%.0a|%.0a|%.0a|%.1a|%.1a", u"", 1.5, 2.5, 0x1.f8p0, 0x1.08p19, 0x1.18p0),
+        "0x1p+1|0x1p+1|0x1p+1|0x1.0p+19|0x1.2p+0"));
+    Require(matches(FormatList(output, sizeof(output), "%ls%.13a|%.13a|%.13La", u"", 0x1.0000000000001p+0, 0x1.0000000000003p+0,
+        0x1.0000000000001p+0L), "0x1.0000000000000p+0|0x1.0000000000004p+0|0x1.0000000000001p+0"));
+    Require(matches(FormatList(output, sizeof(output), "%ls%La|%La|%.0La|%LA|%La|%.3La|%La|%.15La", u"", 1.0L, 100.0L, 100.0L, -2.5L,
+        0x1p-16445L, 3.14159L, 0.1L, 0x1.fffffffffffffffep0L),
+        "0x1p+0|0x1.9p+6|0x1p+7|-0X1.4P+1|0x1p-16445|0x1.922p+1|0x1.999999999999999ap-4|0x1.000000000000000p+1"));
+    Require(matches(FormatList(output, sizeof(output), "%ls[%-012a][%012a][%12a][%+.2a][%#a][% A][%012La][%-012La]", u"", 1.0, 1.0, 1.0,
+        1.0, 1.0, 1.0, 1.5L, 1.5L), "[0x1p+0      ][0x0000001p+0][      0x1p+0][+0x1.00p+0][0x1.p+0][ 0X1P+0][0x00001.8p+0][0x1.8p+0    ]"));
+    Require(matches(FormatList(output, sizeof(output), "%ls%a|%.3a|%a|[%010a][%-6A]", u"", 0.0, 0.0, -0.0, INFINITY, -INFINITY),
+        "0x0p+0|0x0.000p+0|-0x0p+0|[       inf][-INF  ]"));
+    std::fesetround(FE_UPWARD);
+    const int upward = FormatList(output, sizeof(output), "%ls%.0a|%.0a|%.1La|%.1La", u"", 1.0625, -1.0625, 1.03125L, -1.03125L);
+    std::fesetround(FE_TONEAREST);
+    Require(matches(upward, "0x1p+1|-0x1p+0|0x1.1p+0|-0x1.0p+0"));
+    std::fesetround(FE_DOWNWARD);
+    const int downward = FormatList(output, sizeof(output), "%ls%.0a|%.0a", u"", 1.9375, -1.0625);
+    std::fesetround(FE_TONEAREST);
+    Require(matches(downward, "0x1p+0|-0x1p+1"));
+    std::fesetround(FE_TOWARDZERO);
+    const int towardZero = FormatList(output, sizeof(output), "%ls%.0a|%.0a", u"", 1.9375, -1.9375);
+    std::fesetround(FE_TONEAREST);
+    Require(matches(towardZero, "0x1p+0|-0x1p+0"));
 }
 
 __attribute__((noinline)) static void APS5_VABI RunChecks() {
@@ -291,4 +326,4 @@ static void CheckAllocatingFormat() {
     free_nid_postfix(allocated);
 }
 
-int main() { RunChecks(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+int main() { RunChecks(); CheckAllocatingFormat(); CheckHexadecimalFloats(); return CheckWidePrecision() ? 0 : 1; }

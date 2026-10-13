@@ -3,7 +3,9 @@
 
 #include "SceTypes.hpp"
 #include <array>
+#include <bit>
 #include <cerrno>
+#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -164,13 +166,26 @@ inline std::string NanSpec(const std::string& spec) {
     return result + 's';
 }
 
-inline std::string FormatPointer(const std::string& spec, const void* pointer) {
-    std::size_t index = 1;
+struct FormatFields {
     bool left = false;
     bool zero = false;
+    bool plus = false;
+    bool space = false;
+    bool alternate = false;
+    bool hasPrecision = false;
+    std::size_t width = 0;
+    std::size_t precision = 0;
+};
+
+inline FormatFields ReadFormatFields(const std::string& spec) {
+    FormatFields fields;
+    std::size_t index = 1;
     for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
-        if (spec[index] == '-') left = true;
-        if (spec[index] == '0') zero = true;
+        if (spec[index] == '-') fields.left = true;
+        if (spec[index] == '0') fields.zero = true;
+        if (spec[index] == '+') fields.plus = true;
+        if (spec[index] == ' ') fields.space = true;
+        if (spec[index] == '#') fields.alternate = true;
     }
     const auto readNumber = [&] {
         std::size_t number = 0;
@@ -180,24 +195,91 @@ inline std::string FormatPointer(const std::string& spec, const void* pointer) {
         }
         return number;
     };
-    const std::size_t width = readNumber();
-    bool hasPrecision = false;
-    std::size_t precision = 0;
+    fields.width = readNumber();
     if (index < spec.size() && spec[index] == '.') {
         ++index;
-        hasPrecision = true;
-        precision = readNumber();
+        fields.hasPrecision = true;
+        fields.precision = readNumber();
     }
+    return fields;
+}
+
+inline std::string Justify(const FormatFields& fields, const std::string& prefix, const std::string& body, bool zero) {
+    const std::size_t used = prefix.size() + body.size();
+    const std::size_t padding = fields.width > used ? fields.width - used : 0;
+    if (fields.left) return prefix + body + std::string(padding, ' ');
+    if (zero) return prefix + std::string(padding, '0') + body;
+    return std::string(padding, ' ') + prefix + body;
+}
+
+inline std::string FormatPointer(const std::string& spec, const void* pointer) {
+    const FormatFields fields = ReadFormatFields(spec);
     const auto value = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer));
     std::string digits;
     for (unsigned long long rest = value; rest != 0; rest >>= 4) digits.insert(digits.begin(), "0123456789abcdef"[rest & 15]);
-    if (digits.empty() && !(hasPrecision && precision == 0)) digits = "0";
-    if (digits.size() < precision) digits.insert(0, precision - digits.size(), '0');
-    const std::size_t used = digits.size() + 2;
-    const std::size_t padding = width > used ? width - used : 0;
-    if (left) return "0x" + digits + std::string(padding, ' ');
-    if (zero && !hasPrecision) return "0x" + std::string(padding, '0') + digits;
-    return std::string(padding, ' ') + "0x" + digits;
+    if (digits.empty() && !(fields.hasPrecision && fields.precision == 0)) digits = "0";
+    if (digits.size() < fields.precision) digits.insert(0, fields.precision - digits.size(), '0');
+    return Justify(fields, "0x", digits, fields.zero && !fields.hasPrecision);
+}
+
+inline std::string HexFloatText(const std::string& spec, bool upper, bool binary64, bool negative, bool infinite, int exponent, std::uint64_t significand) {
+    const FormatFields fields = ReadFormatFields(spec);
+    std::string prefix = negative ? "-" : fields.plus ? "+" : fields.space ? " " : "";
+    if (infinite) return Justify(fields, prefix, upper ? "INF" : "inf", false);
+    prefix += upper ? "0X" : "0x";
+    std::string body(1, significand != 0 ? '1' : '0');
+    if (significand != 0) {
+        const int shift = std::countl_zero(significand);
+        significand <<= shift;
+        exponent -= shift;
+    } else {
+        exponent = 0;
+    }
+    std::uint64_t fraction = significand << 1;
+    if (fields.hasPrecision && fields.precision < 16) {
+        const unsigned kept = binary64 && fields.precision == 13 ? 51 : 4 * static_cast<unsigned>(fields.precision);
+        const std::uint64_t mask = ~std::uint64_t{0} >> kept;
+        const std::uint64_t rest = fraction & mask;
+        const std::uint64_t half = (mask >> 1) + 1;
+        const bool odd = kept == 0 || ((fraction >> (64 - kept)) & 1) != 0;
+        const int rounding = std::fegetround();
+        bool up = rest > half || (rest == half && odd);
+        if (rounding == FE_TOWARDZERO) up = false;
+        else if (rounding == FE_UPWARD) up = rest != 0 && !negative;
+        else if (rounding == FE_DOWNWARD) up = rest != 0 && negative;
+        fraction &= ~mask;
+        if (up) {
+            fraction += mask + 1;
+            if (fraction == 0) ++exponent;
+        }
+    }
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    std::string fractionDigits;
+    for (int shift = 60; shift >= 0; shift -= 4) fractionDigits += digits[(fraction >> shift) & 15];
+    if (fields.hasPrecision) fractionDigits.resize(fields.precision, '0');
+    else fractionDigits.erase(fractionDigits.find_last_not_of('0') + 1);
+    if (!fractionDigits.empty() || fields.alternate) body += '.';
+    body += fractionDigits;
+    body += upper ? 'P' : 'p';
+    body += exponent < 0 ? '-' : '+';
+    body += std::to_string(exponent < 0 ? -exponent : exponent);
+    return Justify(fields, prefix, body, fields.zero);
+}
+
+inline std::string FormatHexFloat(const std::string& spec, bool upper, double value) {
+    const auto bits = std::bit_cast<std::uint64_t>(value);
+    const int biased = static_cast<int>((bits >> 52) & 0x7ff);
+    const std::uint64_t significand = ((bits << 12) >> 1) | (biased != 0 ? std::uint64_t{1} << 63 : 0);
+    return HexFloatText(spec, upper, true, (bits >> 63) != 0, biased == 0x7ff, biased != 0 ? biased - 1023 : -1022, significand);
+}
+
+inline std::string FormatHexFloat(const std::string& spec, bool upper, long double value) {
+    std::uint64_t significand;
+    std::uint16_t sign;
+    std::memcpy(&significand, &value, sizeof(significand));
+    std::memcpy(&sign, reinterpret_cast<const unsigned char*>(&value) + sizeof(significand), sizeof(sign));
+    const int biased = sign & 0x7fff;
+    return HexFloatText(spec, upper, false, (sign >> 15) != 0, biased == 0x7fff, biased != 0 ? biased - 16383 : -16382, significand);
 }
 
 constexpr size_t maximumArgumentPosition = 99;
@@ -338,16 +420,23 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             const char* nan = conversion >= 'a' ? "nan" : "NAN";
+            const bool hexadecimal = conversion == 'a' || conversion == 'A';
+            const auto appendHexadecimal = [&](auto value) {
+                const std::string text = FormatHexFloat(spec, conversion == 'A', value);
+                output.Append(text.data(), text.size());
+            };
             if (length == "L") {
                 static_assert(sizeof(long double) == 16);
                 static_assert(std::numeric_limits<long double>::digits == 64);
                 const long double value = args.Next<long double>();
                 if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                else if (hexadecimal) appendHexadecimal(value);
                 else output.Value(spec + "L" + conversion, value);
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
                 const double value = args.Next<double>();
                 if (std::isnan(value)) output.Value(NanSpec(spec), nan);
+                else if (hexadecimal) appendHexadecimal(value);
                 else output.Value(spec + conversion, value);
             }
         } else if (conversion == 'c' && (length.empty() || length == "h")) {
