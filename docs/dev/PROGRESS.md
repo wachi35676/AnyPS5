@@ -1,6 +1,6 @@
 # Progress reporting
 
-[`tools/progress.py`](../../tools/progress.py) generates `progress.json`, HTML, SVG maps and badges. The [Progress workflow](../../.github/workflows/progress.yml) publishes them after pushes to `main`. The [Progress report workflow](../../.github/workflows/progress-report.yml) compares the base and head trees of pull requests.
+[`tools/progress.py`](../../tools/progress.py) generates `progress.json`, HTML, SVG maps and badges. The [Pages workflow](../../.github/workflows/pages.yml) publishes them after pushes to `main`. The [Progress report workflow](../../.github/workflows/progress-report.yml) compares the base and head trees of pull requests.
 
 ## Library counts
 
