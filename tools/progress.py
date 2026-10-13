@@ -299,7 +299,7 @@ def treemap(title, data, left):
         for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
             parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
-        label = group["label"][:int((w - 10) / 7)]
+        label = group["label"][:max(int((w - 10) / 7), 0)]
         if (label == group["label"] or len(label) >= 3) and h > 22:
             parts.append(text(x + 5, y + 16, label, 12))
         parts.append("</g>")

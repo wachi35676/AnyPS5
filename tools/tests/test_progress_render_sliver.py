@@ -15,6 +15,15 @@ class ProgressRenderSliverTests(unittest.TestCase):
         shaders = {"done": 0, "total": 0, "percent": 0, "groups": []}
         self.assertIn("<svg", progress.render(libraries, shaders))
 
+    def test_sliver_group_has_no_label(self):
+        data = {"done": 301, "total": 301, "percent": 100, "groups": [
+            {"name": "libA", "label": "libA", "done": 300, "todo": 0},
+            {"name": "libB", "label": "libB", "done": 1, "todo": 0}]}
+        parts = "\n".join(progress.treemap("Libraries", data, 0))
+        sliver = parts[parts.index("<g><title>libB"):]
+        self.assertNotIn("<text", sliver)
+        self.assertIn(">libA</text>", parts)
+
     def test_cells_without_area(self):
         self.assertEqual(progress.cells(5, 0, 0, 0, 10), [])
         self.assertEqual(progress.cells(5, 0, 0, -1, 10), [])
