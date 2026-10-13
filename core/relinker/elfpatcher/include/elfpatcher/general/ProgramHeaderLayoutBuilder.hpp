@@ -33,6 +33,8 @@ namespace Elfpatcher {
         [[nodiscard]] Domain::ProgramHeader _makePhdrHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
         [[nodiscard]] Domain::ProgramHeader _makeDynamicHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
         [[nodiscard]] Domain::ProgramHeader _makeInterpHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
+        [[nodiscard]] Domain::ProgramHeader _makeStackHeader() const;
+        [[nodiscard]] bool _hasStackHeader(const std::vector<Domain::ProgramHeader>& headers) const;
         [[nodiscard]] std::uint32_t _fixLoadFlags(std::uint32_t originalFlags) const;
         [[nodiscard]] std::vector<Domain::ProgramHeader> _keptHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const;
         void _sortLoadHeaders(std::vector<Domain::ProgramHeader>& headers) const;

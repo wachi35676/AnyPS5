@@ -95,6 +95,18 @@ Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeInterpHeader(std::uint64_
     return ph;
 }
 
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeStackHeader() const {
+    Domain::ProgramHeader ph{};
+    ph.Type = PT_GNU_STACK;
+    ph.Flags = PF_R | PF_W;
+    ph.Alignment = kStackHeaderAlignment;
+    return ph;
+}
+
+bool ProgramHeaderLayoutBuilder::_hasStackHeader(const std::vector<Domain::ProgramHeader>& headers) const {
+    return std::any_of(headers.begin(), headers.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; });
+}
+
 std::uint32_t ProgramHeaderLayoutBuilder::_fixLoadFlags(std::uint32_t originalFlags) const {
     if (originalFlags == 0) return PF_R | PF_W | PF_X;
     return originalFlags | PF_R;
@@ -142,7 +154,8 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
 }
 
 std::size_t ProgramHeaderLayoutBuilder::RequiredProgramHeaderCount(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
-    return _keptHeaders(originalHeaders).size() + kSyntheticProgramHeaderCount;
+    const auto kept = _keptHeaders(originalHeaders);
+    return kept.size() + kSyntheticProgramHeaderCount + (_hasStackHeader(kept) ? 0 : 1);
 }
 
 std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
@@ -152,13 +165,13 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     auto kept = _keptHeaders(request.OriginalHeaders);
     const auto frameCount = std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
 
-    const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount <= request.PhNum;
-    if (!keepFrames && frameCount > 0) {
+    const bool needsStackHeader = !_hasStackHeader(kept);
+    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount + (needsStackHeader ? 1 : 0);
+    if (neededPh > request.PhNum && frameCount > 0) {
         throw Domain::RelinkerException("No free program header slot for PT_GNU_EH_FRAME");
     }
     _sortLoadHeaders(kept);
 
-    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount;
     if (neededPh > request.PhNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
@@ -215,6 +228,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     layout.push_back(_makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
     layout.push_back(_makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
     layout.push_back(_makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
+    if (needsStackHeader)
+        layout.push_back(_makeStackHeader());
 
     for (std::size_t index = 0; index < layout.size(); ++index)
         _writeProgramHeader(buf, static_cast<std::size_t>(request.PhOff) + index * request.PhEntSize, layout[index]);

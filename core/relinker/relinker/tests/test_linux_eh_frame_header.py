@@ -103,17 +103,17 @@ def main():
         result, elf = relink(relinker, directory, "full-slots", image)
         headers = program_headers(elf)
         assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == [EH_FRAME_HEADER], headers
-        assert len(headers) == 7, headers
+        assert len(headers) == 8, headers
         assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
         assert "PT_GNU_EH_FRAME" not in result.stderr, result.stderr
         assert elf[table_end:table_end + 56] == image[table_end:table_end + 56], "Bytes after the input program header table changed"
 
-        image = fixture(6, with_frame=False)
-        table_end = 64 + 6 * 56
+        image = fixture(7, with_frame=False)
+        table_end = 64 + 7 * 56
         image[table_end:table_end + 56] = bytes([0xa5]) * 56
         result, elf = relink(relinker, directory, "no-frame-exact-slots", image)
         headers = program_headers(elf)
-        assert len(headers) == 6, headers
+        assert len(headers) == 7 and struct.unpack_from("<Q", elf, 0x20)[0] == 64, headers
         assert "PT_GNU_EH_FRAME" not in result.stderr, result.stderr
         assert elf[table_end:table_end + 56] == image[table_end:table_end + 56], "Bytes after the program header table changed"
 
@@ -122,23 +122,23 @@ def main():
             image[64 + 5 * 56:64 + 6 * 56] = bytes([0xa5]) * 56
             result, elf = relink(relinker, directory, "few-slots-" + str(with_frame), image)
             headers = program_headers(elf)
-            assert len(headers) == (7 if with_frame else 6), headers
+            assert len(headers) == (8 if with_frame else 7), headers
             assert [header for header in headers if header[0] == PT_GNU_EH_FRAME] == ([EH_FRAME_HEADER] if with_frame else []), headers
             assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
             assert elf[64 + 5 * 56:64 + 6 * 56] == image[64 + 5 * 56:64 + 6 * 56], "Bytes after the input program header table changed"
 
         image = fixture(5, with_frame=False)
         headers = image[64:64 + 4 * 56]
-        headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * 65530
+        headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * 65529
         struct.pack_into("<Q", image, 32, len(image))
-        struct.pack_into("<H", image, 56, 65534)
+        struct.pack_into("<H", image, 56, 65533)
         image += headers
         source = Path(directory) / "overflowing-header-count.elf"
         output = source.with_suffix(".out")
         source.write_bytes(image)
         result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
         assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
-        assert "Not enough program header slots: need 65536, available 65534" in result.stderr, result.stderr
+        assert "Not enough program header slots: need 65536, available 65533" in result.stderr, result.stderr
         assert not output.exists(), "An unrepresentable header count must not produce an executable"
     print("Linux eh_frame header test passed")
 

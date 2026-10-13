@@ -22,9 +22,16 @@ int main() {
         Require(rejected);
         load.MappedAddress = 0x1000; load.MemorySize = 0x1000;
         Require(builder.ComputeExtraBlockVaddr({load}, 0x1003) == 0x2003);
-        Elfpatcher::ProgramHeaderLayoutRequest valid{64, 56, 6, {load}, 0x1000, 0x2000, 0x100, 0x1000, 16, 0x1010, 8};
+        Elfpatcher::ProgramHeaderLayoutRequest valid{64, 56, 7, {load}, 0x1000, 0x2000, 0x100, 0x1000, 16, 0x1010, 8};
         std::vector<std::uint8_t> output(0x1100, 0xA5);
-        Require(builder.WriteLayout(output, valid) == 6);
+        Require(builder.RequiredProgramHeaderCount({load}) == 7);
+        Require(builder.WriteLayout(output, valid) == 7);
+        Domain::ProgramHeader stack{};
+        stack.Type = 0x6474e551; stack.Flags = 7;
+        auto declared = valid;
+        declared.OriginalHeaders.push_back(stack);
+        Require(builder.RequiredProgramHeaderCount(declared.OriginalHeaders) == 7);
+        Require(builder.WriteLayout(output, declared) == 7);
         for (int kind = 0; kind < 11; ++kind) {
             auto request = valid;
             switch (kind) {
@@ -46,6 +53,6 @@ int main() {
             try { builder.WriteLayout(bytes, request); } catch (const std::exception&) { rejected = true; }
             Require(rejected && bytes == before);
         }
-        std::cout << "14 program layout cases passed\n";
+        std::cout << "16 program layout cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
