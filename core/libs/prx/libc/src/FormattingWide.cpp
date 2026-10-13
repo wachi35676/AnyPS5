@@ -28,17 +28,21 @@ bool In(char16_t character, const char* set) {
 }
 
 void AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
+    constexpr std::uint32_t Minimum[] = {0, 0x80, 0x800, 0x10000};
     for (std::size_t index = 0; out.size() < limit && text[index] != '\0';) {
         const unsigned char lead = static_cast<unsigned char>(text[index]);
-        std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+        const std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
         std::uint32_t code = extra == 3 ? lead & 0x07 : extra == 2 ? lead & 0x0f : extra == 1 ? lead & 0x1f : lead;
         std::size_t used = 1;
         for (; used <= extra; ++used) {
             const unsigned char next = static_cast<unsigned char>(text[index + used]);
-            if ((next & 0xc0) != 0x80) { extra = 0; code = lead; used = 1; break; }
+            if ((next & 0xc0) != 0x80) break;
             code = (code << 6) | (next & 0x3f);
         }
-        if (extra != 0) used = extra + 1;
+        if (used <= extra || lead > 0xf4 || code < Minimum[extra] || code > 0x10ffff || (code >= 0xd800 && code < 0xe000)) {
+            code = lead;
+            used = 1;
+        }
         index += used;
         if (code >= 0x10000) {
             if (limit - out.size() < 2) break;
