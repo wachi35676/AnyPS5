@@ -6376,6 +6376,54 @@ void verifyBdaReadFallbackFunctions() {
     }
 }
 
+void verifyBdaNoteWriteFunction() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>(outputAddress >> 32u)};
+    const std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u, 0xdc708000u, 0x007d0301u, 0xdc708004u, 0x007d0301u, 0xbf810000u};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x50000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    const auto spirv = Recompile(request).spirv;
+    std::map<std::uint32_t, std::string> names;
+    std::string function;
+    std::size_t definitions = 0;
+    std::size_t calls = 0;
+    std::size_t inlined = 0;
+    for (std::size_t cursor = 5; cursor < spirv.size();) {
+        const auto length = spirv[cursor] >> 16u;
+        require(length != 0 && length <= spirv.size() - cursor, "BDA write note: truncated SPIR-V instruction");
+        const auto op = spirv[cursor] & 0xffffu;
+        if (op == spv::OpName) names[spirv[cursor + 1]] = reinterpret_cast<const char*>(&spirv[cursor + 2]);
+        if (op == spv::OpFunction) {
+            function = names[spirv[cursor + 2]];
+            if (function == "note_bda_write") {
+                ++definitions;
+                if ((spirv[cursor + 3] & spv::FunctionControlDontInlineMask) == 0u) ++inlined;
+            }
+        }
+        if (op == spv::OpFunctionCall && names[spirv[cursor + 3]] == "note_bda_write") ++calls;
+        cursor += length;
+    }
+    require(definitions == 1u && calls != 0u, "BDA write note: the stores do not call one note_bda_write function");
+    require(inlined == 0u, "BDA write note: note_bda_write may be inlined into every store site");
+}
+
 void verifyBdaAnchors() {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
@@ -7279,6 +7327,7 @@ int main(int argc, char** argv) {
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
+        verifyBdaNoteWriteFunction();
         verifyBdaAnchors();
         verifyFunctionLdsBound();
         verifyFunctionLdsUpdates();

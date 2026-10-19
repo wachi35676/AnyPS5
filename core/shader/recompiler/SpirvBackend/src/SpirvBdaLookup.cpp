@@ -152,7 +152,7 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
     const auto voidType = state.module.Type(spv::OpTypeVoid);
     const auto function = state.module.AllocateId();
     state.module.AddName(function, "note_bda_write");
-    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, voidType, TypeScalarU64(state)));
+    state.module.AddFunction(spv::OpFunction, voidType, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, voidType, TypeScalarU64(state)));
     const auto address = state.module.AllocateId();
     state.module.AddFunction(spv::OpFunctionParameter, TypeScalarU64(state), address);
     EmitLabel(state, state.module.AllocateId());
